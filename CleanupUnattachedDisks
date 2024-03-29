@@ -1,0 +1,44 @@
+try	{
+	"Logging in to Azure..."
+    Connect-AzAccount -Identity
+}
+catch {
+    Write-Error -Message $_.Exception
+    throw $_.Exception
+}
+
+$pattern = "pattern-disk"
+
+$subscriptionName = (Get-AzContext).Subscription.Name
+
+$disk = Get-AzDisk | Where-Object {$_.DiskState -eq "Unattached" -and $_.Name -notlike "$pattern" -and $_.Name -notlike "*donotdelete*"}
+Write-Output "Cleaning up the following disks"
+$disk | Select-Object Name, @{l='Subscription';e={$subscriptionName}}, DiskState, @{l='SKU';e={$_.Sku.Name}}, Tier, DiskSizeGB | Format-Table -AutoSize
+
+# Get Resource Groups for each Disk so we can remove the locks to allow delete
+$resourcegroups_for_locks = $disk.ResourceGroupName | Select-Object -Unique
+
+# Get all Resource Locks that will be removed, add them to an array to later re-create and then delete
+$lockdetails = @()
+foreach ($item in $resourcegroups_for_locks) {
+    $lockdetails += Get-AzResourceLock -ResourceGroupName $item
+    Get-AzResourceLock -ResourceGroupName $item | Remove-AzResourceLock -Force
+}
+
+# Cleanup all the disks
+foreach ($item in $disk) {
+    Write-Output "Removing Disk - $($item.Name) - Please Wait..."
+    Remove-AzDisk -Name $item.Name -ResourceGroupName $item.ResourceGroupName -Force
+}
+
+# Recreate all the resource locks with the original details
+foreach ($item in $lockdetails) {
+    
+    # handle error if notes doesnt exist otherwise it fails, and set to empty string
+    if(Get-Member -inputobject $item.Properties -name "notes" -Membertype Properties){
+        $notes = $item.Properties.notes
+        }else{
+            $notes = " "
+        }
+    New-AzResourceLock -LockLevel $item.Properties.level -LockNotes $notes -LockName $item.Name -ResourceGroupName $item.ResourceGroupName -Force
+}
