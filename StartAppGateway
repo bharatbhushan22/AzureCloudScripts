@@ -1,0 +1,53 @@
+#Connect using Managed Identity
+try
+{
+"Logging in to Azure..."
+Connect-AzAccount -Identity
+}
+catch {
+Write-Error -Message $_.Exception
+throw $_.Exception
+}
+
+$pattern = "pattern-appg"
+
+$appGateways = Get-AzApplicationGateway | Where-Object {$_.Tag.Values -like "*yes*" -and $_.Tag.Values -notcontains "donotdelete" -and $_.Name -like "$pattern"}
+$appgw = $appGateways | Select-Object Name
+$resourceGroups = $appGateways | Select-Object ResourceGroupName
+
+# Get all Resource Locks that will be removed, add them to an array to later re-create and then delete
+$lockdetails = @()
+foreach ($item in $resourceGroups) {
+    $lockdetails += Get-AzResourceLock -ResourceGroupName $item
+    Get-AzResourceLock -ResourceGroupName $item | Remove-AzResourceLock -Force
+}
+
+# Starting app gateway
+foreach ($item in $appGateways) {
+    Write-Output "Resource Group: $($item.ResourceGroupName)"
+    Write-Output "Starting Application Gateway: $($item.Name)"   
+    
+    $appgate = Get-AzApplicationGateway -Name $item.Name -ResourceGroupName $item.ResourceGroupName
+    
+    Start-AzApplicationGateway -ApplicationGateway $appgate
+    Start-Sleep -Seconds 5
+    
+    Write-Output "Application Gateway: $($item.Name) is now Started"   
+
+}
+
+# Wait for jobs to finish before adding locks back
+Write-Output "Waiting for Start AzApplicationGateway Jobs to Finish"
+Get-Job -Command 'Start-AzApplicationGateway*' | Wait-Job -Timeout 60
+
+# Recreate all the resource locks with the original details
+foreach ($item in $lockdetails) {
+    
+    # handle error if notes doesnt exist otherwise it fails, and set to empty string
+    if(Get-Member -inputobject $item.Properties -name "notes" -Membertype Properties){
+        $notes = $item.Properties.notes
+        }else{
+            $notes = " "
+        }
+    New-AzResourceLock -LockLevel $item.Properties.level -LockNotes $notes -LockName $item.Name -ResourceGroupName $item.ResourceGroupName -Force
+}
