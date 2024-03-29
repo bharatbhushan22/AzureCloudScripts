@@ -1,0 +1,13 @@
+try	
+{
+	"Logging in to Azure..."
+	Connect-AzAccount -Identity
+}
+catch {
+    Write-Error -Message $_.Exception
+    throw $_.Exception
+}
+
+    $VMs = Get-AzVM -ResourceGroupName "<resource-group-name>" | Where-Object {($_.Tags.Values -like 'tag1') -and ($_.Tags.Values -like 'tag2') -and ($_.Tags.Values -like 'tag3')}
+    $VMs | Stop-AzVM -Verbose
+    Write-Output $VMs.Name
